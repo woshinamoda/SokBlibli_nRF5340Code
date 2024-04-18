@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "main.h": "c",
+        "log.h": "c",
+        "led_button.h": "c",
+        "dk_buttons_and_leds.h": "c",
+        "gpio.h": "c",
+        "gap.h": "c"
+    }
+}

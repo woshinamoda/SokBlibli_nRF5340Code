@@ -1,7 +1,27 @@
 # nRF5340_Softdevice_note_Sosssk
 Record my verification code in Bilibili column tutorial<br>
 
-## **day update by 2024-04-14** 
+## update 2024-04-18
+新增分支LBS<br>
+主要：学习到lesson4的内容，LBS点灯/按键服务知识<br>
+> 工程新增文件<br>
+- [x] src-> my_lbs.c
+- [x] src-> my_lbs.h
+    #### 1. main.新建内容<br>
+    * 新增连接参数修改（PHY、MTU、连接间隔）
+    * 更新发生才连接回调事件内on_connected（），在BT回调事件里面添加更新成功打印log的功能函数
+    * notice ： prj要定义FPU和更新连接参数的配置
+    * mian.c中新建一个线程（send_data_thread_id），用来定时模拟传感器发送数据
+    #### 2. lbs.c 内容<br>
+    * 参考DevAcademy教程，添加按键点灯服务
+    * 服务下新增特征
+      * 1 点灯特征 属性：write
+      * 2 按键特征 属性：indicate & read 
+      * 3 传感器特征 属性：notify(可选择使能描述符)
+
+
+
+##  update 2024-04-14
 记录基于BLE协议栈的调试代码（peripheral-uart）<br>
 笔记思路
 1. 广播（响应，广播参数更新）
