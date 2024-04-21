@@ -1,6 +1,21 @@
 # nRF5340_Softdevice_note_Sosssk
 Record my verification code in Bilibili column tutorial<br>
 
+## update 2024-04-21
+更新master分支，内容NUS透传服务部分<br>
+1. 工程文件夹新增《child_image》:用于修改子image的config文件
+2. 新增overlay文件，添加USB CDC需要的设备节点
+3. main.c文件添加函数可以动态修改连接参数le_params<br>
+4. 新增USB_CDC_ACM功能，用于NUS服务的串口外设，添加async_adapter.c增加异步功能
+
+增加串口透传服务思路（在原有LBS服务上修改步骤）
+* 1：conf中添加CONFUG_BT_NUS = y，系统会调用nus.c / nus.h文件
+* 2：添加nus的服务与初始化
+* 3：USB_CDC的config注意连锁使能,初始化去掉串口流等待
+<br>====================进度=======================<br>
+已经可以实现NUS基本功能，尚未添加数据收发逻辑。历程中用的UART0，这里换成USB。新增child_image文件夹，用于设置hci_ipc网络核的config
+
+
 ## update 2024-04-18
 新增分支LBS<br>
 主要：学习到lesson4的内容，LBS点灯/按键服务知识<br>
@@ -45,10 +60,12 @@ Record my verification code in Bilibili column tutorial<br>
 [本人专栏链接](https://member.bilibili.com/platform/upload-manager/opus) 
 ---
 ### 文件夹目录内容说明<br>
-| 文件夹名称                | 内容     
-| -------                  | :--------:  
-| src                      | 主代码
-| .gitgnore                | git上传去掉build部分，用户子自己添加SDK编译会生成  
-| CMakeLists               | 编译项   
-| prj.conf                 | Kconfig配置文件   
-| EDA_data                 | 嘉立创的原理图
+| 文件夹名称                                        | 内容     
+| -------                                          | :--------:  
+| src                                              | 主代码
+| .gitgnore                                        | git上传去掉build部分，用户子自己添加SDK编译会生成  
+| CMakeLists                                       | 编译项   
+| prj.conf                                         | Kconfig配置文件   
+| EDA_data                                         | 嘉立创的原理图
+| nrf5340dk_nrf5340_cpuapp.overlay                 | 修改自定义设备树
+| child_image                                      | 子image的conf修改文件

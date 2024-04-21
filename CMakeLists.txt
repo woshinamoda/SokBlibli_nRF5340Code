@@ -5,5 +5,6 @@ project(nRF5340_BLE_Sossk)
 
 target_sources(app PRIVATE 
   src/main.c
-  src/my_lbs.c)
+  src/uart_async_adapter.c
+)
 target_sources(app PRIVATE src/led_button.c)

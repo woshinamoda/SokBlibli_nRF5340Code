@@ -15,6 +15,8 @@
 #include <hal/nrf_gpio.h>
 // sys
 #include <stdint.h>
+// peripheral
+#include <zephyr/drivers/uart.h>
 
 
 

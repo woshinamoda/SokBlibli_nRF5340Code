@@ -7,8 +7,11 @@
 #include <zephyr/bluetooth/gatt.h>
 /*À¶ÑÀÁ´½ÓÍ·ÎÄ¼ş*/
 #include <zephyr/bluetooth/conn.h>
-/* Ìí¼ÓÓÃ»§MY LBS ·şÎñ£¨°´¼ü+µãµÆ£©Í·ÎÄ¼ş*/
-#include "my_lbs.h"
+/*Ìí¼Ónus·şÎñÍ·ÎÄ¼ş*/
+#include <bluetooth/services/nus.h>
+/*Ìí¼Ó USB CDC ADCÍ·ÎÄ¼ş*/
+#include <zephyr/usb/usb_device.h>
+#include "uart_async_adapter.h"
 
 
 #include "led_button.h"
@@ -19,21 +22,31 @@
 #define LOG_MODULE_NAME Sok_log_init
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 // ×Ô¶¨Òå¹ã²¥Ãû³Æ 
-#define DEVICE_NAME "Sok_nRF5340_slave"
+#define DEVICE_NAME "Sok_NUS_Service_Test"
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
-/*/  ×Ô¶¨ÒåÁ´½ÓÉè±¸my_conn
+/*  ×Ô¶¨ÒåÁ´½ÓÉè±¸my_conn
 //  Connect management £º bt_conn
 //  ZephyrÀ¶ÑÀĞ­ÒéÕ»Ê¹ÓÃbt_conn³éÏó(*my_conn)À´Á¬½ÓÆäËûÉè±¸
 //  note1£º¸Ã½á¹¹Ìå²»ÏòÓ¦ÓÃ³ÌĞò¹«¿ª
 //  note2£º¿ÉÒÔÊ¹ÓÃbt_conn_git_info()»ñÈ¡ÓĞÏŞĞÅÏ¢
 //  note3£º¿ÉÒÔÊ¹ÓÃbt_con_ref()È·±£¶ÔÏó£¨Ö¸Õë£©ÓĞĞ§ĞÔ*/
-struct bt_conn *my_conn = NULL;
-
+struct bt_conn *my_conn = NULL;		//ÓÃ»§Á¬½Ó³éÏó
+struct bt_conn *auth_conn = NULL;	//×Ô¶¯ÖØÁ¬³éÏó
+// USB CDC ACM UART »º´æ
+#define CONFIG_BT_NUS_UART_BUFFER_SIZE 2048
+static uint8_t cdc_rx_buf[10];		//½ÓÊÜÖ¸Áî¿ØÖÆÔÚ10¸ö×Ö½ÚÄÚ
+struct uart_data_t 					//Êı¾İ½á¹¹
+{
+	void *fifo_reserved;
+	uint8_t data[CONFIG_BT_NUS_UART_BUFFER_SIZE];
+	uint16_t len;
+};
+static K_FIFO_DEFINE(fifo_uart_tx_data);	//½ÓÊÕµ½·şÎñ¶ËÊı¾İ£¬tx·¢³öÈ¥
+static K_FIFO_DEFINE(fifo_uart_rx_data);	//rx½ÓÊÕµ½USBÊı¾İ£¬ÓÉ¿Í»§¶Ë·şÎñ·¢³öÈ¥
 
 
 /* ¸üĞÂÁ¬½Ó²ÎÊı²¿·Ö´úÂë* start********************************************************************/
-
-static void update_phy(struct bt_conn *conn)	//function 1 : ¸üĞÂradioµÄphy
+static void update_phy(struct bt_conn *conn)	//function 1 : ¶¯Ì¬¸üĞÂradioµÄphy
 {
 	int err;
 	const struct bt_conn_le_phy_param preferred_phy = {	//·¢ËÍºÍ½ÓÊÜµÄµ÷ÖÆËÙÂÊ¿ÉÒÔµ¥¶ÀÉèÖÃ
@@ -46,8 +59,7 @@ static void update_phy(struct bt_conn *conn)	//function 1 : ¸üĞÂradioµÄphy
 		LOG_ERR("bt_conn_le_phy_update() returned %d", err);
 	}
 };
-
-static void update_data_length(struct bt_conn *conn)	//function 2 £º ¸üĞÂÊı¾İ³¤¶ÈDLE
+static void update_data_length(struct bt_conn *conn)	//function 2 £º ¶¯Ì¬¸üĞÂÊı¾İ³¤¶ÈDLE
 {
 	int err;
 	struct bt_conn_le_data_len_param my_data_len = {
@@ -59,7 +71,6 @@ static void update_data_length(struct bt_conn *conn)	//function 2 £º ¸üĞÂÊı¾İ³¤¶
 		LOG_ERR("data_len_update failed (err %d)", err);
 	}
 };
-
 static struct bt_gatt_exchange_params exchange_params;
 static void exchange_func(struct bt_conn *conn, uint8_t att_err,
 			  struct bt_gatt_exchange_params *params)
@@ -71,7 +82,7 @@ static void exchange_func(struct bt_conn *conn, uint8_t att_err,
 		LOG_INF("New MTU: %d bytes", payload_mtu);
 	}
 }
-static void update_mtu(struct bt_conn *conn)	//function 3 £º ¸üĞÂMTU
+static void update_mtu(struct bt_conn *conn)	//function 3 £º ¶¯Ì¬¸üĞÂMTU
 {
 	int err;
 	exchange_params.func = exchange_func;
@@ -80,8 +91,15 @@ static void update_mtu(struct bt_conn *conn)	//function 3 £º ¸üĞÂMTU
 		LOG_ERR("bt_gatt_exchange_mtu failed (err %d)", err);
 	}
 }
-
-
+static void update_led_param(struct bt_conn *conn)	//function 4: ¶¯Ì¬¸üĞÂÁ¬½Ó²ÎÊı
+{
+	struct bt_le_conn_param param;
+	param.interval_max = 800;
+	param.interval_min = 800;
+	param.latency = 0;
+	param.timeout = 400;
+	bt_conn_le_param_update(conn, &param);
+}
 void on_le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t latency,	//¸üĞÂÁ¬½Ó³É¹¦»Øµ÷º¯Êı
 			 uint16_t timeout)
 {
@@ -90,8 +108,6 @@ void on_le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t laten
 	LOG_INF("Connection parameters updated: interval %.2f ms, latency %d intervals, timeout %d ms",
 		connection_interval, latency, supervision_timeout);
 }
-
-
 void on_le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param)		//¸üĞÂPHY³É¹¦»Øµ÷º¯Êı
 {
 	if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_1M) {
@@ -102,7 +118,6 @@ void on_le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param)	
 		LOG_INF("PHY updated. New PHY: Long Range");
 	}
 }
-
 void on_le_data_len_updated(struct bt_conn *conn, struct bt_conn_le_data_len_info *info)	//¸üĞÂÊı¾İ³¤¶È³É¹¦»Øµ÷º¯Êı
 {
 	uint16_t tx_len = info->tx_max_len;
@@ -112,9 +127,6 @@ void on_le_data_len_updated(struct bt_conn *conn, struct bt_conn_le_data_len_inf
 	LOG_INF("Data length updated. Length %d/%d bytes, time %d/%d us", tx_len, rx_len, tx_time,
 		rx_time);
 }
-
-
-
 /* ¸üĞÂÁ¬½Ó²ÎÊı²¿·Ö´úÂë* end**********************************************************************/
 
 
@@ -130,7 +142,7 @@ static const struct bt_data ad[]={// ÉèÖÃ¹ã²¥ĞÅÏ¢
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),           //¹ã²¥Ãû³Æ
 };
 static const struct bt_data sd[] = {// ÉèÖÃ¹ã²¥É¨ÃèÓ¦´ğ 
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_LBS_VAL),   					//·µ»ØÉ¨ÃèUUIDĞÅÏ¢
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),	//Ó¦´ğNUS·şÎñµÄUUID 128bytesÈ«³Æ
 };
 void on_connected(struct bt_conn *conn, uint8_t err)//À¶ÑÀÁ¬½Ó³É¹¦»Øµ÷º¯Êı
 {
@@ -148,11 +160,6 @@ void on_connected(struct bt_conn *conn, uint8_t err)//À¶ÑÀÁ¬½Ó³É¹¦»Øµ÷º¯Êı
 		LOG_ERR("bt_conn_get_info() returned %d", err);
 		return;
 	}
-	/*´òÓ¡LOG¿´ÏÂµ±Ç°µÄÁ¬½Ó²ÎÊı*/
-	double connection_interval = info.le.interval * 1.25; 	// Á¬½Ó¼ä¸ôunit£ºms
-	uint16_t supervision_timeout = info.le.timeout * 10;	// Á¬½Ó³¬Ê±unit£ºms
-	LOG_INF("Connection parameters: interval %.2f ms, latency %d intervals, timeout %d ms",
-		connection_interval, info.le.latency, supervision_timeout);
 	
 	update_phy(my_conn);
 	update_data_length(my_conn);
@@ -162,16 +169,21 @@ void on_connected(struct bt_conn *conn, uint8_t err)//À¶ÑÀÁ¬½Ó³É¹¦»Øµ÷º¯Êı
 void on_disconnected(struct bt_conn *conn, uint8_t reason)//À¶ÑÀ¶Ï¿ªÊÂ¼ş»Øµ÷º¯Êı
 {
 	LOG_INF("Disconnected. Reason %d", reason);
-	bt_conn_unref(my_conn);
-  	LED_BLE_H;	//Ï¨ÃğÁ¬½ÓÖ¸Ê¾µÆ
+	if (auth_conn) {
+		bt_conn_unref(auth_conn);
+		auth_conn = NULL;
+	}
+
+	if (my_conn) {
+		bt_conn_unref(my_conn);
+		my_conn = NULL;
+		LED_BLE_H;
+	}
 }
 struct bt_conn_cb connection_callbacks = {//ÉêÃ÷Á´½Ó»Øµ÷½á¹¹Ìå
 	.connected = on_connected,
 	.disconnected = on_disconnected,
-	/* ĞÂÔö¸üĞÂÁ¬½Ó²ÎÊı»Øµ÷ÊÂ¼ş */
-	.le_param_updated = on_le_param_updated,
-	.le_phy_updated = on_le_phy_updated,
-	.le_data_len_updated = on_le_data_len_updated,	
+
 };
 /* À¶ÑÀ¹ã²¥ÉèÖÃÏà¹Ø²¿·Ö´úÂë* end*******************************************************************/
 
@@ -179,24 +191,89 @@ struct bt_conn_cb connection_callbacks = {//ÉêÃ÷Á´½Ó»Øµ÷½á¹¹Ìå
 
 
 
-/* µãµÆLSB ·şÎñ²¿·Ö´úÂë* start********************************************************************/
-static bool app_button_state;
-static void app_led_cb(bool led_state)//LEDÌØÕ÷ÏÂ·¢»Øµ÷º¯Êı
+/* ´®¿ÚÍ¸´«NUS ·şÎñ²¿·Ö´úÂë* start********************************************************************/
+static struct bt_conn_auth_cb conn_auth_callbacks;
+static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)	//NUS·şÎñÊÕµ½Êı¾İÊÂ¼ş-»Øµ÷º¯Êı
 {
-	if(led_state == true)
-	LED_MARK_L;
-	else
-	LED_MARK_H;
+
 };
-static bool app_button_cb(void)//buttonÌØÕ÷¶ÁÈ¡»Øµ÷º¯Êı£¨ÎŞnotify£¬ËùÒÔ»áÓĞÊÂ¼ş»Øµ÷£©
+static void bt_send_enabled_cb(enum bt_nus_send_status status)	//NUS·¢ËÍÍê³É»Øµ÷
 {
-	return app_button_state;
+
 };
-static struct my_lbs_cb app_callbacks = {//ÓÃÓÚ³õÊ¼»¯»Øµ÷ÊÂ¼şº¯ÊıµÄ½á¹¹ÌåÉùÃ÷
-	.led_cb = app_led_cb,
-	.button_cb = app_button_cb,
+static void  bt_sent_cb(struct bt_conn *conn)	//NUS·¢ËÍÖ÷»úÊÂ¼ş»Øµ÷
+{
+
 };
-/* µãµÆLSB ·şÎñ²¿·Ö´úÂë* end**********************************************************************/
+static struct bt_nus_cb nus_cb = {	//ÓÃÓÚ³õÊ¼»¯µÄ»Øµ÷ÊÂ¼ş½á¹¹Ìå
+	.received = bt_receive_cb,
+	.send_enabled = bt_send_enabled_cb,
+	.sent = bt_sent_cb,	
+};
+/* ´®¿ÚÍ¸´«NUS ·şÎñ²¿·Ö´úÂë* end**********************************************************************/
+
+
+
+/* USB CDC ACM   ²¿·Ö´úÂë* start********************************************************************/
+static const struct device *uart_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);	//¸ù¾İ½Úµã£¨zephyr£¬cdc_acm_uart£©»ñÈ¡ÊôĞÔ
+static void uart_callback(const struct device *dev,  struct uart_event *evt,  void *user_data)	//USB CDC UART ÊÂ¼ş»Øµ÷
+{
+	struct device *uart = user_data;
+	int err;
+	switch (evt->type) {
+	case UART_TX_DONE:
+		break;
+	case UART_TX_ABORTED:
+		break;
+	case UART_RX_DISABLED:
+	    err = uart_rx_enable(uart_dev, cdc_rx_buf, 10, -1);	
+		break;
+	case UART_RX_RDY:
+		break;
+	case UART_RX_BUF_REQUEST:
+		break;
+	case UART_RX_BUF_RELEASED:
+		break;
+	case UART_RX_STOPPED:
+		break;
+	}	
+}
+static bool uart_test_async_api(const struct device *dev)
+{
+	const struct uart_driver_api *api=
+		(const struct uart_driver_api *)dev->api;
+	return (api->callback_set!=NULL);
+}
+#if CONFIG_USB_UART_ASYNC_ADAPTER
+UART_ASYNC_ADAPTER_INST_DEFINE(async_adapter);
+#else
+static const struct device *const async_adapter;
+#endif
+void usb_cdc_acm_init()	//³õÊ¼»¯USB CDC UART
+{
+	int err;
+	uint8_t *buf;
+	if(!device_is_ready(uart_dev)){
+		printk("device %s is not ready; exiting\n", uart_dev->name);
+	}
+    if (IS_ENABLED(CONFIG_USB_DEVICE_STACK)) {
+		err = usb_enable(NULL);
+		if (err && (err != -EALREADY)) {
+			printk("Failed to enable USB\n");
+			return;
+		}
+	}
+    if (IS_ENABLED(CONFIG_USB_UART_ASYNC_ADAPTER) && !uart_test_async_api(uart_dev)) {
+		/* Implement API adapter */
+		uart_async_adapter_init(async_adapter, uart_dev);
+		uart_dev = async_adapter;
+	}	
+	err = uart_callback_set(uart_dev, uart_callback, (void *)uart_dev);
+	__ASSERT(err == 0, "Failed to set callback");
+    err = uart_rx_enable(uart_dev, cdc_rx_buf, 10, -1);	//¿ªÆôÒì²½½ÓÊÜ£¬500HZ¶ÔÓ¦2ms£¬ÖĞ¶ÏÀïÃæÇå³ı×èÈû¿ªÆôÁ¬Ğø½ÓÊÜ
+}
+/* USB CDC ACM   ²¿·Ö´úÂë* end**********************************************************************/
 
 
 
@@ -226,9 +303,10 @@ static void bt_private_set_addr()
 
 int main(void)
 {
-  int err;
+    int err;
 	int blink_status = 0;  
-  Led_Button_init();
+	usb_cdc_acm_init();
+  	Led_Button_init();	
   //bt_private_set_addr();
 
   /* ×¢²áÁ¬½ÓÊÂ¼ş»Øµ÷ */
@@ -239,12 +317,12 @@ int main(void)
 		LOG_ERR("Bluetooth init failed (err %d)\n", err);
 		return;
 	}
-	/* Ìí¼ÓLBS·şÎñ³õÊ¼»¯ */
-	err = my_lbs_init(&app_callbacks);
+	/* ³õÊ¼»¯NUS·şÎñ */
+	err = bt_nus_init(&nus_cb);
 	if (err) {
-		printk("Failed to init LBS (err:%d)\n", err);
+		LOG_ERR("Failed to initialize UART service (err: %d)", err);
 		return;
-	}	
+	}
   /* °´ÕÕÉèÖÃºÃµÄadv_param²ÎÊı¿ªÆô¹ã²¥ */
 	err = bt_le_adv_start(adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
@@ -263,15 +341,10 @@ int main(void)
 /* Ä£Äâ´«¸ĞÆ÷Êı¾İÏß³Ì start********************************************************************/
 #define STACKSIZE 1024
 #define PRIORITY 7
-static uint32_t app_sensor_value = 100;
+
 void send_data_thread(void)//ĞÂ½¨Ò»¸öÏß³Ì£¬ÓÃÓÚÄ£Äâ´«¸ĞÆ÷·¢ËÍÊı¾İ
 {
 	while (1) {
-		app_sensor_value++;
-		if (app_sensor_value == 200) {
-			app_sensor_value = 100;
-		}
-		my_lbs_send_sensor_notify(app_sensor_value);
 		k_sleep(K_MSEC(500));
 	}
 }
