@@ -1,7 +1,7 @@
 # nRF5340_Softdevice_note_Sosssk
 Record my verification code in Bilibili column tutorial<br>
 
-## update 2024-04-21
+## update 2024-04-24
 更新NUS分支，同时master变基分支（用于copy修改后续内容）<br>
 > 新增核心功能<br>
 
