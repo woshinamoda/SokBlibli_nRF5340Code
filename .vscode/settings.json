@@ -5,6 +5,7 @@
         "led_button.h": "c",
         "dk_buttons_and_leds.h": "c",
         "gpio.h": "c",
-        "gap.h": "c"
+        "gap.h": "c",
+        "queue": "c"
     }
 }
