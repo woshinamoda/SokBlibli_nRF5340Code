@@ -33,16 +33,35 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 struct bt_conn *my_conn = NULL;		//用户连接抽象
 struct bt_conn *auth_conn = NULL;	//自动重连抽象
 // USB CDC ACM UART 缓存
-#define CONFIG_BT_NUS_UART_BUFFER_SIZE 2048
-static uint8_t cdc_rx_buf[10];		//接受指令控制在10个字节内
-struct uart_data_t 					//数据结构
+#define DATA_SIZE_MAX  230			//串口（或传感器）一包最多收到230bytes数据
+/* 根据节点（zephyr，cdc_acm_uart）获取属性 */
+static const struct device *uart_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);	
+typedef struct			//USB收到数据（指令） &&  传感器准备好数据， 缓存到该FIFO中，通过NUS服务发送出去																	
 {
-	void *fifo_reserved;
-	uint8_t data[CONFIG_BT_NUS_UART_BUFFER_SIZE];
-	uint16_t len;
-};
-static K_FIFO_DEFINE(fifo_uart_tx_data);	//接收到服务端数据，tx发出去
-static K_FIFO_DEFINE(fifo_uart_rx_data);	//rx接收到USB数据，由客户端服务发出去
+	uint8_t * p_data;	//实际存放数据的数组								
+	uint16_t length;	//这组数据长度
+} buffer_t;
+uint8_t rx_buffer[2][DATA_SIZE_MAX];
+uint8_t *next_buf = rx_buffer[1];
+uint8_t my_data_array[50000];	//缓存USB指令 && 传感器数据区域 eg：50000bytes
+uint16_t data_cnt;
+K_MSGQ_DEFINE(device_message_queue, sizeof(buffer_t), 200, 2);	//静态创建队列，名称：device_message_queue，大小butter_t，里面消息数量200个，每个元素对齐2bytes
+
+
+/* throuht send data timer* start***************************************************************/
+static uint8_t ble_led_cnt;
+static void timer0_handler(struct k_timer *dummy)	//timer tick = 10ms
+{
+	int err;
+	ble_led_cnt++;
+	if(ble_led_cnt >= 50)
+	{
+		nrf_gpio_pin_toggle(LED_BLE);
+		ble_led_cnt = 0;
+	}
+}
+static K_TIMER_DEFINE(timer0, timer0_handler, NULL);
+/* throuht send data timer* end*****************************************************************/
 
 
 /* 更新连接参数部分代码* start********************************************************************/
@@ -196,7 +215,8 @@ static struct bt_conn_auth_cb conn_auth_callbacks;
 static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)	//NUS服务收到数据事件-回调函数
 {
-
+	int err;
+	err = uart_tx(uart_dev, data, len, SYS_FOREVER_MS);
 };
 static void bt_send_enabled_cb(enum bt_nus_send_status status)	//NUS发送完成回调
 {
@@ -216,22 +236,45 @@ static struct bt_nus_cb nus_cb = {	//用于初始化的回调事件结构体
 
 
 /* USB CDC ACM   部分代码* start********************************************************************/
-static const struct device *uart_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);	//根据节点（zephyr，cdc_acm_uart）获取属性
 static void uart_callback(const struct device *dev,  struct uart_event *evt,  void *user_data)	//USB CDC UART 事件回调
 {
 	struct device *uart = user_data;
 	int err;
+	buffer_t push_buf; 
+	buffer_t pop_buf; 
+
+	uint16_t length;
 	switch (evt->type) {
-	case UART_TX_DONE:
+	case UART_TX_DONE:	
 		break;
 	case UART_TX_ABORTED:
 		break;
 	case UART_RX_DISABLED:
-	    err = uart_rx_enable(uart_dev, cdc_rx_buf, 10, -1);	
+   		err = uart_rx_enable(uart_dev, rx_buffer[0], sizeof(rx_buffer[0]), -1);		//开启连续接受模式
 		break;
 	case UART_RX_RDY:
+		length = evt->data.rx.len;
+		memcpy(&my_data_array[data_cnt], evt->data.rx.buf, length);	//数据存入缓存
+		push_buf.length = length;	//数据地址存入堆栈
+		push_buf.p_data = &my_data_array[data_cnt];
+		err = k_msgq_put(&device_message_queue, &push_buf, K_FOREVER);
+		if (err) {
+			LOG_ERR("Return value from k_msgq_put = %d", err);
+		}
+
+		err = k_msgq_get(&device_message_queue, &pop_buf, K_FOREVER);
+		if (err) {
+			LOG_ERR("Return value from k_msgq_get = %d", err);
+		}
+		bt_nus_send(NULL, pop_buf.p_data, pop_buf.length);
+		data_cnt = data_cnt + length;
 		break;
 	case UART_RX_BUF_REQUEST:
+		err = uart_rx_buf_rsp(uart, next_buf,
+			sizeof(rx_buffer[0]));
+		if (err) {
+			LOG_WRN("UART RX buf rsp: %d", err);
+		}	
 		break;
 	case UART_RX_BUF_RELEASED:
 		break;
@@ -271,7 +314,7 @@ void usb_cdc_acm_init()	//初始化USB CDC UART
 	}	
 	err = uart_callback_set(uart_dev, uart_callback, (void *)uart_dev);
 	__ASSERT(err == 0, "Failed to set callback");
-    err = uart_rx_enable(uart_dev, cdc_rx_buf, 10, -1);	//开启异步接受，500HZ对应2ms，中断里面清除阻塞开启连续接受
+    err = uart_rx_enable(uart_dev, rx_buffer[0], sizeof(rx_buffer)[0], -1);		//中断里面清除阻塞开启连续接受
 }
 /* USB CDC ACM   部分代码* end**********************************************************************/
 
@@ -307,6 +350,8 @@ int main(void)
 	int blink_status = 0;  
 	usb_cdc_acm_init();
   	Led_Button_init();	
+
+	
   //bt_private_set_addr();
 
   /* 注册连接事件回调 */
@@ -330,6 +375,10 @@ int main(void)
 		return;
 	}
   LOG_INF("Advertising successfully started");
+
+  	k_timer_start(&timer0, K_MSEC(1), K_MSEC(10));
+
+	
 	for (;;) {
     	//线程中不能用死循环造成堵塞
 		k_sleep(K_MSEC(1000));
@@ -341,7 +390,6 @@ int main(void)
 /* 模拟传感器数据线程 start********************************************************************/
 #define STACKSIZE 1024
 #define PRIORITY 7
-
 void send_data_thread(void)//新建一个线程，用于模拟传感器发送数据
 {
 	while (1) {

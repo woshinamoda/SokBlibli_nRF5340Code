@@ -1,6 +1,31 @@
 # nRF5340_Softdevice_note_Sosssk
 Record my verification code in Bilibili column tutorial<br>
 
+## update 2024-04-24
+更新NUS分支，同时master变基分支（用于copy修改后续内容）<br>
+> 新增核心功能<br>
+
+1 . USB CDC中断新增双缓冲<br>
+```C
+uint8_t rx_buffer[2][DATA_SIZE_MAX];
+uint8_t *next_buf = rx_buffer[1];
+注意回调事件UART_RX_BUF_REQUEST里面切换缓冲区
+```
+2 . 新增定时K_timer<br>
+  暂时的功能只有闪烁BLE指示灯，后续在做更改
+
+3 . 新增队列device_message_queue，以及缓冲逻辑<br>
+  * 新增和老版nRF52一样，新建一个内存池my_data_array[5000]
+  * 自定义buffer_t结构体，结构体元素1.数据头指针  2.数据长度
+  * 通过kernel自带的队列，USB接收到数据复制到内存池，将指针和长度存入结构体压入队列
+  * 然后在从队列取出信息，通过NUS_Send，串口服务的Tx特征发送给手机（服务端）
+
+后续在优化内容<br>
+1：添加FEM工作<br>
+2：添加传感器，数据也是存入内存池，做缓冲操作发送给主机<br>
+
+
+
 ## update 2024-04-21
 更新master分支，内容NUS透传服务部分<br>
 1. 工程文件夹新增《child_image》:用于修改子image的config文件
