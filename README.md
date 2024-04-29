@@ -1,6 +1,52 @@
 # nRF5340_Softdevice_note_Sosssk
 Record my verification code in Bilibili column tutorial<br>
 
+## update 2024-04-29
+更新FEM功能<br>
+添加方式比较简单<br>
+在child_image添加网络和的conf和overlay<br>
+> *使用FEM需要用到nordic的MPSL库，配置Kconfig设置如下<br>
+
+hci_ipc.conf添加内容有
+```C+
+CONFIG_MPSL=y
+CONFIG_MPSL_FEM=y
+CONFIG_MPSL_FEM_SIMPLE_GPIO=y
+CONFIG_BT_CTLR_TX_PWR_ANTENNA=14
+```
+> *同时网络核的设备树里添加FEM引脚地址节点定义
+
+hci_ipc.ocerlay添加内容有
+```C
+/ {
+    nrf_radio_fem: name_of_fem_node {
+       compatible  = "nordic,nrf21540-fem";
+       tx-en-gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>;
+       rx-en-gpios = <&gpio0 31 GPIO_ACTIVE_HIGH>;
+       pdn-gpios   = <&gpio1 10 GPIO_ACTIVE_HIGH>;
+ };
+};
+```
+> *注意点：在nRF5340里面，如果需要网络核配置引脚，需要应用核先释放引脚，所以应用核也需要配置overlay
+
+应用核的overlay添加配置如下，用于释放引脚到网络核
+```C
+&gpio_fwd{
+    /delete-node/ uart;
+    nrf21540-gpio-if{
+        gpios = <&gpio0 30 0>,
+        <&gpio0 31 0>,
+        <&gpio1 10 0>,
+        <&gpio1 11 0>;
+    };
+};
+```
+新增内容2：K_timer定时器的回调函数里面添加判断，蓝牙连接上以后常亮指示灯，蓝牙断开后闪烁指示灯。
+
+ *编写总结：* 实际测试添加FEM前，手机读取RSSI = -80dBm，添加FEM后读取RSSI = -25dBm
+
+
+
 ## update 2024-04-24
 更新NUS分支，同时master变基分支（用于copy修改后续内容）<br>
 > 新增核心功能<br>
