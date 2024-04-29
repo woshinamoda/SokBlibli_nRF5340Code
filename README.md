@@ -44,6 +44,8 @@ hci_ipc.ocerlay添加内容有
 新增内容2：K_timer定时器的回调函数里面添加判断，蓝牙连接上以后常亮指示灯，蓝牙断开后闪烁指示灯。
 
  *编写总结：* 实际测试添加FEM前，手机读取RSSI = -80dBm，添加FEM后读取RSSI = -25dBm
+ 
+[![device](picture/FEM.png)]
 
 
 
@@ -138,5 +140,8 @@ uint8_t *next_buf = rx_buffer[1];
 | CMakeLists                                       | 编译项   
 | prj.conf                                         | Kconfig配置文件   
 | EDA_data                                         | 嘉立创的原理图
+| picture                                          | 需要展示的测试图片
 | nrf5340dk_nrf5340_cpuapp.overlay                 | 修改自定义设备树
 | child_image                                      | 子image的conf修改文件
+
+[![device](picture/DEVICE.png)]
