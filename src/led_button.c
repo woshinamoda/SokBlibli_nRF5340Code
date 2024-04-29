@@ -25,8 +25,9 @@ void pow_init()
 
     nrf_gpio_cfg_output(POW_WIFI);
     nrf_gpio_cfg_output(POW_VADS);
+    k_msleep(10);      
     POW_WIFI_L;
-    POW_VADS_L;    
+    POW_VADS_H;    
 
 }
 void Led_Button_init()

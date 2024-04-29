@@ -53,11 +53,20 @@ static uint8_t ble_led_cnt;
 static void timer0_handler(struct k_timer *dummy)	//timer tick = 10ms
 {
 	int err;
+	struct bt_conn_info info;
+	err = bt_conn_get_info(my_conn, &info);	
 	ble_led_cnt++;
-	if(ble_led_cnt >= 50)
+	if(ble_led_cnt >= 100)
 	{
-		nrf_gpio_pin_toggle(LED_BLE);
-		ble_led_cnt = 0;
+		if(info.state == BT_CONN_STATE_CONNECTED){
+			LED_BLE_L;
+			ble_led_cnt = 0;
+		}
+		else if(info.state == BT_CONN_STATE_DISCONNECTED){
+			nrf_gpio_pin_toggle(LED_BLE);
+			ble_led_cnt = 0;
+		}
+
 	}
 }
 static K_TIMER_DEFINE(timer0, timer0_handler, NULL);
@@ -172,7 +181,7 @@ void on_connected(struct bt_conn *conn, uint8_t err)//蓝牙连接成功回调函数
 	LOG_INF("Connected");
 	my_conn = bt_conn_ref(conn);
   	LED_BLE_L;	//连接指示灯点亮
-
+ 
 	struct bt_conn_info info;				//连接参数结构体
 	err = bt_conn_get_info(conn, &info);	//获取连接参数信息
 	if (err) {
@@ -350,6 +359,7 @@ int main(void)
 	int blink_status = 0;  
 	usb_cdc_acm_init();
   	Led_Button_init();	
+	pow_init();
 
 	
   //bt_private_set_addr();
