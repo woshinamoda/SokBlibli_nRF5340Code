@@ -17,7 +17,7 @@
 #include <stdint.h>
 // peripheral
 #include <zephyr/drivers/uart.h>
-
+#include <zephyr/drivers/spi.h>
 
 
 

@@ -1,5 +1,33 @@
 # nRF5340_Softdevice_note_Sosssk
 Record my verification code in Bilibili column tutorial<br>
+## update 2024-05-04
+新增传感器读取功能，同时添加NUS服务数据交换功能<br>
+工程新增文件
+- [x] src-> ads1299.c
+- [x] src-> ads1299.h
+
+新增功能逻辑如下
+* 1：开启1299传感器功能
+* 2：开启gpiote功能，在1299外部引脚(DRDY)上升沿发送旗标，然后在send_data_thread_id线程里面通过spi读取1299数据，随后压入队列
+* 3：循环检测队列是否为空，不为空从队列里面取出数据，通过NUS RX特征发送出去
+* 4：NUS TX特征添加获取命令交互，收到字符串'T' 开始采集数据， 收到字符串'R'停止采集数据
+
+注意要点
+* notice 1：不能在外部引脚中断读取数据，不然spi会报timeout err，猜测gpiote中断优先级5，系统内有thread优先级高于此，所以这是一个大坑，之前在中断读数据一直是错误的。
+* notice 2：1299硬件上如果只有1片，不使用菊花链，START引脚可以拉高。不用拉低，在程序内在使用start命令
+
+实际测试功能
+> 堆栈压入压出逻辑功能正确<br>
+> 数据读取功能正常<br>
+> spi时许正确，请参考下图<br>
+
+
+逻辑分析仪测试图
+采集1299 8个通道数据，1个通道3bytes，第一个bytes是STAT_LOFF，有兴趣自己阅读1299手册有说明。所以一包采集共计4*8+3 = 27bytes
+![logic](picture/1299时序图.png)
+
+后续内容：在NUS部分在做一个OOB的NFC配对，BLE部分完结，更新Blibli内容，方便自己那天用到类似项目直接copy。在完后学习开发板的nRF7002和nRF5340的ESB，做实际产品可能通道更高吞吐量无线协议
+
 
 ## update 2024-04-29
 更新FEM功能<br>

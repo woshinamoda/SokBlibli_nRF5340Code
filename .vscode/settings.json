@@ -6,6 +6,17 @@
         "dk_buttons_and_leds.h": "c",
         "gpio.h": "c",
         "gap.h": "c",
-        "queue": "c"
+        "queue": "c",
+        "stdint.h": "c",
+        "spi.h": "c",
+        "ads1299.h": "c",
+        "sections.h": "c",
+        "nrf_spim.h": "c",
+        "nrfx_spim.h": "c",
+        "nrfx_prs.h": "c",
+        "nrfx_log.h": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c"
     }
 }

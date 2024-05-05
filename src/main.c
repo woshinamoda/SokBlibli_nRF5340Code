@@ -13,11 +13,12 @@
 #include <zephyr/usb/usb_device.h>
 #include "uart_async_adapter.h"
 
-
 #include "led_button.h"
+#include "ads1299.h"
 #include "main.h"
 
-
+// 注册线程信号量
+static K_SEM_DEFINE(ble_init_ok, 0, 1);
 // 注册加载log模块 
 #define LOG_MODULE_NAME Sok_log_init
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
@@ -30,25 +31,29 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 //  note1：该结构体不向应用程序公开
 //  note2：可以使用bt_conn_git_info()获取有限信息
 //  note3：可以使用bt_con_ref()确保对象（指针）有效性*/
-struct bt_conn *my_conn = NULL;		//用户连接抽象
-struct bt_conn *auth_conn = NULL;	//自动重连抽象
+struct bt_conn *my_conn = NULL;			//用户连接抽象
+struct bt_conn *auth_conn = NULL;		//自动重连抽象
 // USB CDC ACM UART 缓存
-#define DATA_SIZE_MAX  230			//串口（或传感器）一包最多收到230bytes数据
+#define DATA_SIZE_MAX  230				//串口（或传感器）一包最多收到230bytes数据
 /* 根据节点（zephyr，cdc_acm_uart）获取属性 */
 static const struct device *uart_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);	
-typedef struct			//USB收到数据（指令） &&  传感器准备好数据， 缓存到该FIFO中，通过NUS服务发送出去																	
+uint8_t rx_buffer[2][DATA_SIZE_MAX];	//usb uart接收中断缓存1
+uint8_t *next_buf = rx_buffer[1];		//usb uart接收中断缓存2
+typedef struct							//USB收到数据（指令） &&  传感器准备好数据， 缓存到该FIFO中，通过NUS服务发送出去																	
 {
-	uint8_t * p_data;	//实际存放数据的数组								
-	uint16_t length;	//这组数据长度
+	uint8_t * p_data;					//实际存放数据的数组地址								
+	uint16_t length;					//这组数据长度
 } buffer_t;
-uint8_t rx_buffer[2][DATA_SIZE_MAX];
-uint8_t *next_buf = rx_buffer[1];
-uint8_t my_data_array[50000];	//缓存USB指令 && 传感器数据区域 eg：50000bytes
-uint16_t data_cnt;
+uint16_t my_data_cnt;					//缓存数据长度
+uint8_t my_data_array[50000];			//缓存USB指令 && 传感器数据区域 eg：50000bytes
 K_MSGQ_DEFINE(device_message_queue, sizeof(buffer_t), 200, 2);	//静态创建队列，名称：device_message_queue，大小butter_t，里面消息数量200个，每个元素对齐2bytes
 
 /* User-defined logical variables start ====================================================== */
-static bool bt_state = false;
+static bool bt_cccd = false;		//使能描述符cccd旗标
+static bool bt_state = false;		//蓝牙连接状态旗标
+static bool retry = false;			//重发旗标
+static bool Drdy_flag = false;		//中断引脚准备旗标
+static bool work_state = false;		//传感器采集状态
 /* User-defined logical variables end * ====================================================== */
 
 /* throuht send data timer* start***************************************************************/
@@ -198,6 +203,7 @@ void on_disconnected(struct bt_conn *conn, uint8_t reason)//蓝牙断开事件回调函数
 {
 	LOG_INF("Disconnected. Reason %d", reason);
 	bt_state = false;
+	work_state = false;
 	if (auth_conn) {
 		bt_conn_unref(auth_conn);
 		auth_conn = NULL;
@@ -218,27 +224,54 @@ struct bt_conn_cb connection_callbacks = {//申明链接回调结构体
 
 
 
-
 /* 串口透传NUS 服务部分代码* start********************************************************************/
 static struct bt_conn_auth_cb conn_auth_callbacks;
 static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)	//NUS服务收到数据事件-回调函数
 {
 	int err;
-	err = uart_tx(uart_dev, data, len, SYS_FOREVER_MS);
+	uint8_t order;
+	//err = uart_tx(uart_dev, data, len, SYS_FOREVER_MS); //回环测试，收到服务端数据回传USB串口
+	if(len == 1)
+	{
+		order = data[0];
+		switch(order)
+		{
+			case 'T':
+				work_state = true;	
+			break;
+			case 'S':
+				work_state = false;
+			break;
+			default:
+			
+			break;
+		}
+	}
 };
-static void bt_send_enabled_cb(enum bt_nus_send_status status)	//NUS发送完成回调
+static void bt_send_enabled_cb(enum bt_nus_send_status status)	//NUS使能描述符
 {
-
+	int err;
+	if(status == BT_NUS_SEND_STATUS_ENABLED)
+	{
+		LOG_INF("Enable CCCD");
+		bt_cccd = true;
+	}
+	else
+	{
+		LOG_INF("nus disable CCCD");
+		bt_cccd = false;
+	}
 };
-static void  bt_sent_cb(struct bt_conn *conn)	//NUS发送主机事件回调
+static void  bt_sent_cb(struct bt_conn *conn)	//NUS发送主机事件ACK回调
 {
-
+	//ble_data_send_queue();
 };
 static struct bt_nus_cb nus_cb = {	//用于初始化的回调事件结构体
 	.received = bt_receive_cb,
 	.send_enabled = bt_send_enabled_cb,
 	.sent = bt_sent_cb,	
+	
 };
 /* 串口透传NUS 服务部分代码* end**********************************************************************/
 
@@ -249,34 +282,31 @@ static void uart_callback(const struct device *dev,  struct uart_event *evt,  vo
 {
 	struct device *uart = user_data;
 	int err;
-	buffer_t push_buf; 
-	buffer_t pop_buf; 
-
-	uint16_t length;
 	switch (evt->type) {
 	case UART_TX_DONE:	
 		break;
+
 	case UART_TX_ABORTED:
 		break;
 	case UART_RX_DISABLED:
    		err = uart_rx_enable(uart_dev, rx_buffer[0], sizeof(rx_buffer[0]), -1);		//开启连续接受模式
 		break;
 	case UART_RX_RDY:
-		length = evt->data.rx.len;
-		memcpy(&my_data_array[data_cnt], evt->data.rx.buf, length);	//数据存入缓存
-		push_buf.length = length;	//数据地址存入堆栈
-		push_buf.p_data = &my_data_array[data_cnt];
-		err = k_msgq_put(&device_message_queue, &push_buf, K_FOREVER);
-		if (err) {
-			LOG_ERR("Return value from k_msgq_put = %d", err);
-		}
+		// length = evt->data.rx.len;
+		// memcpy(&my_data_array[data_cnt], evt->data.rx.buf, length);	//数据存入缓存
+		// push_buf.length = length;	//数据地址存入堆栈
+		// push_buf.p_data = &my_data_array[data_cnt];
+		// err = k_msgq_put(&device_message_queue, &push_buf, K_FOREVER);
+		// if (err) {
+		// 	LOG_ERR("Return value from k_msgq_put = %d", err);
+		// }
 
-		err = k_msgq_get(&device_message_queue, &pop_buf, K_FOREVER);
-		if (err) {
-			LOG_ERR("Return value from k_msgq_get = %d", err);
-		}
-		bt_nus_send(NULL, pop_buf.p_data, pop_buf.length);
-		data_cnt = data_cnt + length;
+		// err = k_msgq_get(&device_message_queue, &pop_buf, K_FOREVER);
+		// if (err) {
+		// 	LOG_ERR("Return value from k_msgq_get = %d", err);
+		// }
+		// bt_nus_send(NULL, pop_buf.p_data, pop_buf.length);
+		// data_cnt = data_cnt + length;
 		break;
 	case UART_RX_BUF_REQUEST:
 		err = uart_rx_buf_rsp(uart, next_buf,
@@ -328,6 +358,54 @@ void usb_cdc_acm_init()	//初始化USB CDC UART
 /* USB CDC ACM   部分代码* end**********************************************************************/
 
 
+/* GPIOTE ADS1299_DRDY 引脚中断部分代码* start*******************************************************/
+//ads1299 数据中断读取数据
+#define ADS1299_DRDY_NODE	DT_ALIAS(sw1)	
+static const struct gpio_dt_spec drdy_dev = GPIO_DT_SPEC_GET(ADS1299_DRDY_NODE, gpios);
+void ads1299_data_prepare()
+{
+	int err;
+	uint16_t length;
+	buffer_t push_buf;
+	length = 222;
+	memcpy(&my_data_array[my_data_cnt], eCon_Message_buf, length);	
+	push_buf.length = length;
+	push_buf.p_data = &my_data_array[my_data_cnt];
+	err = k_msgq_put(&device_message_queue, &push_buf, K_NO_WAIT);
+	if (err) {
+		LOG_WRN("queue is full reason is = %d", err);
+	}
+	my_data_cnt = my_data_cnt + length;
+	if(my_data_cnt >= 49600)
+	my_data_cnt = 0;
+}
+void ads1299_drdy_int_Handle(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	if(bt_cccd == true){
+		Drdy_flag = true;
+	}
+	else{
+		Drdy_flag = false;
+	}
+
+}
+static struct gpio_callback drdy_cb_data;
+void ads1299_gpiote_init()
+{
+	int ret;
+	if (!device_is_ready(drdy_dev.port)) {  
+		return;
+	}
+ 	ret = gpio_pin_configure_dt(&drdy_dev, GPIO_INPUT);	
+	if(ret < 0){
+		return;
+	} 
+	ret = gpio_pin_interrupt_configure_dt(&drdy_dev, GPIO_INT_EDGE_TO_ACTIVE);  //1299在drdy上升沿读取？
+ 	gpio_init_callback(&drdy_cb_data, ads1299_drdy_int_Handle, BIT(drdy_dev.pin));	 
+	gpio_add_callback(drdy_dev.port, &drdy_cb_data);
+}
+/* GPIOTE ADS1299_DRDY 引脚中断部分代码* end*********************************************************/
+
 
 /*
   name      ：bt_private_set_addr（）
@@ -359,13 +437,17 @@ int main(void)
 	int blink_status = 0;  
 	usb_cdc_acm_init();
   	Led_Button_init();	
-
+	pow_init();
+	k_msleep(50);
+	ADS1299_spi_init();
+	ADS1299_SampleRate_init(SAMPLE_RATE_250);
+	ADS_ModeSelect(TestSignal);
 	
   //bt_private_set_addr();
 
-  /* 注册连接事件回调 */
+  	/* 注册连接事件回调 */
 	bt_conn_cb_register(&connection_callbacks);
-  /* 使能协议栈 */
+  	/* 使能协议栈 */
     err = bt_enable(NULL);
 	if (err) {
 		LOG_ERR("Bluetooth init failed (err %d)\n", err);
@@ -377,32 +459,74 @@ int main(void)
 		LOG_ERR("Failed to initialize UART service (err: %d)", err);
 		return;
 	}
-  /* 按照设置好的adv_param参数开启广播 */
+ 	/* 按照设置好的adv_param参数开启广播 */
 	err = bt_le_adv_start(adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
 		LOG_ERR("Advertising failed to start (err %d)\n", err);
 		return;
 	}
-  LOG_INF("Advertising successfully started");
+  	LOG_INF("Advertising successfully started");
 
-  	k_timer_start(&timer0, K_MSEC(1), K_MSEC(10));
-
-	
+	/* 全部初始化完成后开启传感器引脚中断和APP定时器*/
+	k_timer_start(&timer0, K_MSEC(1), K_MSEC(10));
+	ads1299_gpiote_init();	
+	k_sem_give(&ble_init_ok);
 	for (;;) {
     	//线程中不能用死循环造成堵塞
-		k_sleep(K_MSEC(1000));
+		k_sleep(K_MSEC(100));
 	}
 }
-
-
-
 /* 模拟传感器数据线程 start********************************************************************/
 #define STACKSIZE 1024
-#define PRIORITY 7
-void send_data_thread(void)//新建一个线程，用于模拟传感器发送数据
+#define PRIORITY 3
+void send_data_thread(void)//新建一个线程，用于读取数据和发送
 {
-	while (1) {
-		k_sleep(K_MSEC(500));
+	/*mian thread 未初始化完成前不做任何操作*/
+	k_sem_take(&ble_init_ok, K_FOREVER);	
+	int err;
+	uint16_t pop_length;
+	buffer_t pop_buf;
+	for (;;) {
+		if((Drdy_flag == true)&&(work_state == true))
+		{
+			Drdy_flag = false;
+			ADS1299_DATA_SetLine();
+		}
+	if(retry == true)	//如果之前发送失败，需要重发
+	{
+		err = bt_nus_send(NULL, pop_buf.p_data, pop_buf.length);
+		if(err)
+		{
+			LOG_WRN("retry send is fail %d",err);
+		}
+		else
+		{
+			retry = false;
+			LOG_INF("retry send OK");
+		}
+	}
+	else	//没有重发就正常从队列取出数据发送
+	{
+		err = k_msgq_get(&device_message_queue, &pop_buf, K_NO_WAIT);
+		if(err)
+		{
+			LOG_WRN("queue none or timeout reason is = %d", err);
+		}
+		else//取出队列成功
+		{
+			err = bt_nus_send(NULL, pop_buf.p_data, pop_buf.length);
+			if(err)
+			{
+				LOG_WRN("Failed to send data over BLE connection");
+				retry = true;	//发送失败需要重发
+			}
+			else
+			{
+
+			}
+		}
+	}
+		k_usleep(100);
 	}
 }
 //静态创建线程

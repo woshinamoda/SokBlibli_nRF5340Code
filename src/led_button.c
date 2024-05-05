@@ -26,7 +26,7 @@ void pow_init()
     nrf_gpio_cfg_output(POW_WIFI);
     nrf_gpio_cfg_output(POW_VADS);
     k_msleep(10);      
-    POW_WIFI_L;
+    POW_WIFI_H;
     POW_VADS_H;    
 
 }
