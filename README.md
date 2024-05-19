@@ -1,5 +1,35 @@
 # nRF5340_Softdevice_note_Sosssk
 Record my verification code in Bilibili column tutorial<br>
+## update 2024-05-19
+新增NFC 00B带外配对功能<br>
+工程新增文件
+- [x] src-> nfct_oob.c
+- [x] src-> nfct_oob.h
+
+prj.conf新增内容<br>
+* 1 POLL:用于TNEP事件轮询
+* 2 SMP：带外配对开启SMP安全协议
+* 3 NFC：相关（NDEF, TNEP, T4T, NDEF_LE_OOB, NDEF_TEXT等等）
+  
+nfct_oob程序思路
+> /***********pair key perpare板块************/<br>
+> 在main中读取到本地地址，传递给临时密钥TK，初始化&pair_signal轮询事件，事件里面准备好<br>
+> 就填充密钥，同时赋值给&oob_local<br>
+>  /***********sercurity conn模块************/<br>
+> 定义好安全配对中---身份验证回调事件和认证成功配对信息回调事件的初始化赋值（函数）
+>  /***********tnep tag oob模块************/<br>
+> 定义好tnep切换服务事件结构体，必须填充‘收到连接请求回调事件’<br>
+> tnep初始化中通过nfc_tnep_initial_msg_encode初始化message编码为tnep<br>
+> 本代码中除了添加tnep的连接切换服务，同时添加了一个带有text的record的message<br>
+> 最后程序初始化各个模块<br>
+
+具体SMP连接知识，参考文档和nordic B站视频，以及nordic开发者学院BLE第5课程
+
+注意点
+* 1 ：读取本机ADD需要在网络核读取，所以开一些hci的头文件。（nRF53双核）
+* 2 ：蓝牙连接上以后就不需要poll和paring_key_process等操作
+![请求配对](picture/NFCOOB配对请求.png)
+![连接成功](picture/带外连接上从机.png)
 ## update 2024-05-04
 新增传感器读取功能，同时添加NUS服务数据交换功能<br>
 工程新增文件

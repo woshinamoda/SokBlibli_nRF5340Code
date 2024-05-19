@@ -7,6 +7,9 @@
 #include <zephyr/bluetooth/gatt.h>
 /*蓝牙链接头文件*/
 #include <zephyr/bluetooth/conn.h>
+/*添加hci层，用于app调用网络核参数eg：static MAC add*/
+#include <zephyr/bluetooth/hci_vs.h>
+#include <zephyr/drivers/bluetooth/hci_driver.h>
 /*添加nus服务头文件*/
 #include <bluetooth/services/nus.h>
 /*添加 USB CDC ADC头文件*/
@@ -16,6 +19,7 @@
 #include "led_button.h"
 #include "ads1299.h"
 #include "main.h"
+#include "nfct_oob.h"
 
 // 注册线程信号量
 static K_SEM_DEFINE(ble_init_ok, 0, 1);
@@ -23,7 +27,7 @@ static K_SEM_DEFINE(ble_init_ok, 0, 1);
 #define LOG_MODULE_NAME Sok_log_init
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 // 自定义广播名称 
-#define DEVICE_NAME "Sok_NUS_Service_Test"
+#define DEVICE_NAME "eConAlpha"
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
 /*  自定义链接设备my_conn
 //  Connect management ： bt_conn
@@ -225,8 +229,6 @@ struct bt_conn_cb connection_callbacks = {//申明链接回调结构体
 
 
 /* 串口透传NUS 服务部分代码* start********************************************************************/
-static struct bt_conn_auth_cb conn_auth_callbacks;
-static struct bt_conn_auth_info_cb conn_auth_info_callbacks;
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)	//NUS服务收到数据事件-回调函数
 {
 	int err;
@@ -416,19 +418,38 @@ void ads1299_gpiote_init()
 */
 static void bt_private_set_addr()
 {
-  int err;
-  bt_addr_le_t addr;
+	int err;
+  	bt_addr_le_t addr;
 	err = bt_addr_le_from_str("FF:EE:DD:CC:BB:AA", "random", &addr);
 	if (err) {
 		printk("Invalid BT address (err %d)\n", err);
 	}
-
 	err = bt_id_create(&addr, NULL);
 	if (err < 0) {
 		printk("Creating new ID failed (err %d)\n", err);
 	}
 }
+/*
+  name      ：bt_get_addr（）
+  function  ：读取本机的MAC ADD
+  param     : none
+  return    : none
+  notice    : 需要在BT_ENABLE之后，同时引用hci头文件，APP从网络核中读取
+*/
+char user_addr_str[BT_ADDR_STR_LEN];
 
+static void bt_get_addr()
+{
+	struct bt_hci_vs_static_addr addr;
+	int addr_count;
+	addr_count = bt_read_static_addr(&addr, 1);
+
+	if (addr_count > 0)
+	{
+		bt_addr_to_str(&(addr.bdaddr), user_addr_str, sizeof(user_addr_str));
+		printk("BT addr: %s\n", user_addr_str);
+	}
+}
 
 
 int main(void)
@@ -440,19 +461,22 @@ int main(void)
 	pow_init();
 	k_msleep(50);
 	ADS1299_spi_init();
-	ADS1299_SampleRate_init(SAMPLE_RATE_250);
+	ADS1299_SampleRate_init(SAMPLE_RATE_1000);
 	ADS_ModeSelect(TestSignal);
-	
-  //bt_private_set_addr();
+  //bt_private_set_addr();	//设置私有随机地址
 
-  	/* 注册连接事件回调 */
+ 	/* 注册连接事件回调 */
 	bt_conn_cb_register(&connection_callbacks);
+	/* 注册smp连接事件回调 */
+	sercurity_conn_init_main();
   	/* 使能协议栈 */
     err = bt_enable(NULL);
 	if (err) {
 		LOG_ERR("Bluetooth init failed (err %d)\n", err);
 		return;
 	}
+	/* 读取MAC 本地地址*/
+	bt_get_addr();
 	/* 初始化NUS服务 */
 	err = bt_nus_init(&nus_cb);
 	if (err) {
@@ -470,9 +494,14 @@ int main(void)
 	/* 全部初始化完成后开启传感器引脚中断和APP定时器*/
 	k_timer_start(&timer0, K_MSEC(1), K_MSEC(10));
 	ads1299_gpiote_init();	
+	nfc_tnep_ndef_init_main();
 	k_sem_give(&ble_init_ok);
 	for (;;) {
     	//线程中不能用死循环造成堵塞
+		if(bt_state){
+			nfc_tnep_tag_event_handle();	//只有连接时候轮询NFC event
+		}
+
 		k_sleep(K_MSEC(100));
 	}
 }
@@ -510,7 +539,7 @@ void send_data_thread(void)//新建一个线程，用于读取数据和发送
 		err = k_msgq_get(&device_message_queue, &pop_buf, K_NO_WAIT);
 		if(err)
 		{
-			LOG_WRN("queue none or timeout reason is = %d", err);
+			//LOG_WRN("queue none or timeout reason is = %d", err);
 		}
 		else//取出队列成功
 		{

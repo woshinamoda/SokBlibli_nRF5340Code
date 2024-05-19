@@ -7,5 +7,6 @@ target_sources(app PRIVATE
   src/main.c
   src/uart_async_adapter.c
   src/ads1299.c
+  src/nfct_oob.c
 )
 target_sources(app PRIVATE src/led_button.c)

@@ -17,6 +17,18 @@
         "nrfx_log.h": "c",
         "array": "c",
         "string": "c",
-        "string_view": "c"
+        "string_view": "c",
+        "devicetree.h": "c",
+        "msg.h": "c",
+        "nfc_t4t_lib.h": "c",
+        "ch.h": "c",
+        "bluetooth.h": "c",
+        "uart_async_adapter.h": "c",
+        "le_oob_rec.h": "c",
+        "le_oob_rec_parser.h": "c",
+        "text_rec.h": "c",
+        "nfct_oob.h": "c",
+        "hci_vs.h": "c",
+        "errno.h": "c"
     }
 }
