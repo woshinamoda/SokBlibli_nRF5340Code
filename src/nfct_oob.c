@@ -32,7 +32,7 @@
 #define NDEF_MSG_BUF_SIZE 256
 #define AUTH_SC_FLAG 0x08
 
-uint8_t eCon_device_name[] = "eConAlpha";
+uint8_t eCon_device_name[] = "SOK_device";
 static const uint8_t en_code[] = {'e', 'n'};
 static struct bt_le_oob oob_local;
 static uint8_t tk_value[NFC_NDEF_LE_OOB_REC_TK_LEN];
@@ -346,7 +346,7 @@ static int tnep_ch_request_received(const struct nfc_tnep_ch_request *ch_req)
 	return carrier_prepare();
 }
 static struct nfc_tnep_ch_cb ch_cb = {					//定义tnep连接切换服务事件结构体
-#if defined(CONFIG_NFC_TAG_CH_REQUESTER)				//默认select角色
+#if defined(CONFIG_NFC_TAG_CH_REQUESTER)				//默认请求者角色
 	.request_msg_prepare = tnep_ch_request_prepare,
 	.select_msg_recv = tnep_ch_select_received,
 #endif

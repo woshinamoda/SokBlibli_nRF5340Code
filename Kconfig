@@ -1,0 +1,15 @@
+
+menu "Nordic UART BLE GATT service sample"
+
+
+config USB_UART_ASYNC_ADAPTER
+	bool "Enable UART async adapter"
+	select SERIAL_SUPPORT_ASYNC
+	help
+	  Enables asynchronous adapter for UART drives that supports only
+	  IRQ interface.
+
+endmenu
+
+
+source "Kconfig.zephyr"

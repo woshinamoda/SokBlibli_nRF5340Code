@@ -27,7 +27,7 @@ static K_SEM_DEFINE(ble_init_ok, 0, 1);
 #define LOG_MODULE_NAME Sok_log_init
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 // 自定义广播名称 
-#define DEVICE_NAME "eConAlpha"
+#define DEVICE_NAME "sok_nus_device"
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
 /*  自定义链接设备my_conn
 //  Connect management ： bt_conn
@@ -450,7 +450,6 @@ static void bt_get_addr()
 		printk("BT addr: %s\n", user_addr_str);
 	}
 }
-
 
 int main(void)
 {
